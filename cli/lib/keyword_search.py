@@ -7,6 +7,34 @@ from nltk.stem import PorterStemmer
 stemmer = PorterStemmer()
 
 
+class InvertedIndex:
+    def __init__(self) -> None:
+        self.index: dict[str, set[int]] = {}
+        self.docmap: dict[int, dict] = {}
+
+    def __add_document(self, doc_id, text):
+        stopwords = get_stopwords()
+        tokens = tokenize(text, stopwords)
+        for token in tokens:
+            self.index.setdefault(token, set()).add(doc_id)
+
+    def get_document(self, term):
+        return sorted(self.index.get(term.lower(), set()))
+
+    def build(self):
+        movies = get_movies()
+        for m in movies:
+            movietext = f"{m['title']} {m['description']}"
+            self.docmap[m[id], m]
+            self.__add_document(m[id], movietext)
+
+
+def get_movies():
+    with open("data/movies.json", "r") as f:
+        data = json.load(f)
+        return data
+
+
 def preprocess_text(text):
     punct = string.punctuation
     table = str.maketrans("", "", punct)
@@ -34,8 +62,7 @@ def find_by_title(query):
     found_movies = []
     stopwords = get_stopwords()
 
-    with open("data/movies.json", "r") as f:
-        data = json.load(f)
+    data = get_movies()
 
     query_tokens = tokenize(query, stopwords)
 
