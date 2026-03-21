@@ -1,5 +1,6 @@
 import json
 import string
+from functools import lru_cache
 
 from nltk.stem import PorterStemmer
 
@@ -12,12 +13,13 @@ def preprocess_text(text):
     return text.translate(table)
 
 
+@lru_cache(maxsize=1)
 def get_stopwords():
     with open("data/stopwords.txt", "r") as f:
-        return f.read().splitlines()
+        return tuple(f.read().splitlines())
 
 
-def tokenize(text: str, stopwords: list[str]) -> list[str]:
+def tokenize(text: str, stopwords: tuple[str, ...]) -> list[str]:
     text = preprocess_text(text.lower())
     tokens = text.split(" ")
     tokens = [t for t in tokens if t not in stopwords]
