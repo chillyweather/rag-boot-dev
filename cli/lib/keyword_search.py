@@ -1,13 +1,20 @@
 import json
 import string
-from functools import lru_cache
+import pickle
 
+from pathlib import Path
+from functools import lru_cache
 from nltk.stem import PorterStemmer
 
 stemmer = PorterStemmer()
+DEFAULT_SEARCH_LIMIT = 5
 
 
 class InvertedIndex:
+    CACHE_DIR = Path("cache")
+    INDEX_PATH = CACHE_DIR / "index.pkl"
+    DOCMAP_PATH = CACHE_DIR / "docmap.pkl"
+
     def __init__(self) -> None:
         self.index: dict[str, set[int]] = {}
         self.docmap: dict[int, dict] = {}
@@ -18,15 +25,68 @@ class InvertedIndex:
         for token in tokens:
             self.index.setdefault(token, set()).add(doc_id)
 
-    def get_document(self, term):
+    def get_documents(self, term):
         return sorted(self.index.get(term.lower(), set()))
 
     def build(self):
-        movies = get_movies()
-        for m in movies:
+        data = get_movies()
+        for m in data["movies"]:
             movietext = f"{m['title']} {m['description']}"
-            self.docmap[m[id], m]
-            self.__add_document(m[id], movietext)
+            self.docmap[m["id"]] = m
+            self.__add_document(m["id"], movietext)
+
+    def save(self):
+        self.CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+        with open(self.INDEX_PATH, "wb") as f:
+            pickle.dump(self.index, f)
+
+        with open(self.DOCMAP_PATH, "wb") as g:
+            pickle.dump(self.docmap, g)
+
+    def load(self):
+        if not self.DOCMAP_PATH.exists():
+            raise FileNotFoundError(
+                f"Could not find the index file at: {self.DOCMAP_PATH}"
+            )
+        if not self.INDEX_PATH.exists():
+            raise FileNotFoundError(
+                f"Could not find the index file at: {self.INDEX_PATH}"
+            )
+
+        with open(self.DOCMAP_PATH, "rb") as f:
+            self.docmap = pickle.load(f)
+
+        with open(self.INDEX_PATH, "rb") as g:
+            self.index = pickle.load(g)
+
+
+def search_command(query: str, limit: int = DEFAULT_SEARCH_LIMIT) -> list[dict]:
+    idx = InvertedIndex()
+    try:
+        idx.load()
+    except FileNotFoundError as e:
+        print(f"File not found: {e}")
+        return []
+
+    stopwords = get_stopwords()
+    tokens = tokenize(query, stopwords)
+
+    results = []
+    seen = set()
+
+    for token in tokens:
+        set_of_ids = idx.get_documents(token)
+        for id_ in set_of_ids:
+            if id_ in seen:
+                continue
+            seen.add(id_)
+            results.append(idx.docmap[id_])
+
+            if len(results) >= limit:
+                return results
+
+    return results
 
 
 def get_movies():
