@@ -1,32 +1,68 @@
 import json
-import string
+import math
 import pickle
-
-from pathlib import Path
+import string
+from collections import Counter, defaultdict
 from functools import lru_cache
+from pathlib import Path
+
 from nltk.stem import PorterStemmer
 
 stemmer = PorterStemmer()
 DEFAULT_SEARCH_LIMIT = 5
+BM25_K1 = 1.5
 
 
 class InvertedIndex:
     CACHE_DIR = Path("cache")
     INDEX_PATH = CACHE_DIR / "index.pkl"
     DOCMAP_PATH = CACHE_DIR / "docmap.pkl"
+    TF_PATH = CACHE_DIR / "term_frequencies.pkl"
 
     def __init__(self) -> None:
-        self.index: dict[str, set[int]] = {}
+        self.index: dict[str, set[int]] = defaultdict(set)
         self.docmap: dict[int, dict] = {}
+        self.term_frequencies: dict[int, Counter] = defaultdict(Counter)
 
     def __add_document(self, doc_id, text):
         stopwords = get_stopwords()
         tokens = tokenize(text, stopwords)
         for token in tokens:
             self.index.setdefault(token, set()).add(doc_id)
+        self.term_frequencies[doc_id].update(tokens)
 
     def get_documents(self, term):
         return sorted(self.index.get(term.lower(), set()))
+
+    def get_tf(self, doc_id, term):
+        doc_id_ = int(doc_id)
+        stopwords = get_stopwords()
+        tokens = tokenize(term, stopwords)
+        if len(tokens) > 1:
+            raise ValueError("Too many tokens")
+        token = tokens[0]
+        tf = self.term_frequencies[doc_id_]
+
+        count = tf[token]
+        return count
+
+    def get_bm25_tf(self, doc_id, term, k1=BM25_K1):
+        tf = self.get_tf(doc_id, term)
+        bm25_tf = (tf * (k1 + 1)) / (tf + k1)
+        return bm25_tf
+
+    def get_bm25_idf(self, term: str) -> float:
+        stopwords = get_stopwords()
+        tokens = tokenize(term, stopwords)
+        if len(tokens) > 1:
+            raise ValueError("Too many tokens")
+        documentFrequency = self.get_documents(tokens[0])
+        bm25_idf = math.log(
+            (len(self.docmap) - len(documentFrequency) + 0.5)
+            / (len(documentFrequency) + 0.5)
+            + 1
+        )
+        return bm25_idf
 
     def build(self):
         data = get_movies()
@@ -44,6 +80,9 @@ class InvertedIndex:
         with open(self.DOCMAP_PATH, "wb") as g:
             pickle.dump(self.docmap, g)
 
+        with open(self.TF_PATH, "wb") as t:
+            pickle.dump(self.term_frequencies, t)
+
     def load(self):
         if not self.DOCMAP_PATH.exists():
             raise FileNotFoundError(
@@ -54,11 +93,44 @@ class InvertedIndex:
                 f"Could not find the index file at: {self.INDEX_PATH}"
             )
 
+        if not self.TF_PATH.exists():
+            raise FileNotFoundError(f"Could not find the index file at: {self.TF_PATH}")
+
         with open(self.DOCMAP_PATH, "rb") as f:
             self.docmap = pickle.load(f)
 
         with open(self.INDEX_PATH, "rb") as g:
             self.index = pickle.load(g)
+
+        with open(self.TF_PATH, "rb") as t:
+            self.term_frequencies = pickle.load(t)
+
+
+def bm25_tf_command(doc_id, term, k1=BM25_K1):
+    inverted_index = InvertedIndex()
+    inverted_index.load()
+    bm25_tf = inverted_index.get_bm25_tf(doc_id, term, k1)
+    return bm25_tf
+
+def idf_command(query: str):
+    inverted_index = InvertedIndex()
+    stopwords = get_stopwords()
+    tokens = tokenize(query, stopwords)
+    if len(tokens) > 1:
+        raise ValueError("Too many tokens")
+
+    inverted_index.load()
+    docs = inverted_index.get_documents(tokens[0])
+    docmap = inverted_index.docmap
+    idf = math.log((len(docmap) + 1) / (len(docs) + 1))
+    return idf
+
+
+def bm25_idf_command(query: str):
+    inverted_index = InvertedIndex()
+    inverted_index.load()
+    bm25_idf = inverted_index.get_bm25_idf(query)
+    return bm25_idf
 
 
 def search_command(query: str, limit: int = DEFAULT_SEARCH_LIMIT) -> list[dict]:
@@ -109,8 +181,8 @@ def get_stopwords():
 
 def tokenize(text: str, stopwords: tuple[str, ...]) -> list[str]:
     text = preprocess_text(text.lower())
-    tokens = text.split(" ")
-    tokens = [t for t in tokens if t not in stopwords]
+    tokens = text.split()
+    tokens = [t for t in tokens if t and t not in stopwords]
     return stem_tokens(tokens)
 
 
