@@ -1,0 +1,217 @@
+"Front";"Back"
+"What is an Inverted Index?";"Maps terms → document IDs that contain them. Instead of scanning every document for a query term, you look it up and get the matching docs instantly.
+
+Structure:
+  index[""polic""] → {1, 5, 99}
+  index[""movi""]  → {1, 7, 99}
+
+Forward index answers: ""What words are in doc X?""
+Inverted index answers: ""What docs contain word X?""
+
+Search engines use inverted indexes because queries ask for documents by term, not the other way around."
+"What is a Posting List?";"The list of document IDs stored for a term in the inverted index. When you look up a term, you get its posting list.
+
+Example:
+  term ""polic"" → posting list [1, 5, 99]
+  term ""movi""  → posting list [1, 7, 99]
+
+Posting lists are kept sorted by doc ID — this enables efficient intersection (AND queries) using a linear merge instead of nested loops."
+"What is Tokenization in a search engine?";"Splitting raw text into individual units (tokens) for indexing and querying. Both documents and queries go through the same tokenization so they use the same vocabulary.
+
+Example:
+  ""The police ran fast"" → [""the"", ""police"", ""ran"", ""fast""]
+
+Implementation:
+  tokens = text.split()  # splits on any whitespace, ignores empty strings"
+"What are Stopwords and why remove them?";"Stopwords are common words with little semantic meaning: ""the"", ""is"", ""a"", ""in"", etc.
+
+Why remove them:
+- They appear in almost every document → low discriminative power
+- They inflate the index size
+- They add noise to matching
+
+Example:
+  ""the police ran fast"" → remove stopwords → [""police"", ""ran"", ""fast""]
+
+Implementation: load from a file, check membership before indexing each token."
+"What is Stemming and why use it in search?";"Stemming reduces words to their root form so that different grammatical forms of the same word match each other.
+
+Examples (Porter Stemmer):
+  ""running"" → ""run""
+  ""movies""  → ""movi""
+  ""police""  → ""polic""
+
+Why it matters:
+  A query for ""running"" should match documents about ""run"" or ""runs"".
+  Stemming improves recall (finding more relevant results).
+
+Trade-off: loses tense and plurality nuance (""ran"" ≠ ""run"" after stemming in some cases)."
+"What is Term Frequency (TF)?";"TF = how many times a term appears in a specific document. A higher TF means the term is more central to that document's topic.
+
+Example:
+  ""police"" appears 3 times in doc 5 → TF(""police"", doc5) = 3
+
+Implementation: after tokenizing a document, count each token using a Counter.
+
+  from collections import Counter
+  term_frequencies[doc_id].update(tokens)  # counts all tokens at once
+
+Used in: TF-IDF and BM25 scoring."
+"What is Document Frequency (DF)?";"DF = the number of documents in the corpus that contain a given term.
+
+Examples:
+  DF(""the"")   ≈ N  (appears in almost all docs → low signal)
+  DF(""heist"") = 3  (appears in few docs → high signal)
+
+Used in: IDF and BM25 IDF calculations.
+
+  df = len(index.get_documents(term))  # length of the posting list"
+"What is IDF (Inverse Document Frequency) and what formula do we use?";"IDF measures how rare a term is across all documents. Rare terms are more informative for search.
+
+Formula (with smoothing):
+  IDF = log( (N + 1) / (df + 1) )
+
+  N  = total number of documents
+  df = number of documents containing the term
+  +1 = smoothing to avoid division by zero
+
+Interpretation:
+  Common term (""the""):  df ≈ N → IDF ≈ 0   (not useful)
+  Rare term (""heist""):  df = 3 → IDF is high (strong signal)
+
+Implementation:
+  idf = math.log((len(docmap) + 1) / (len(docs) + 1))"
+"What is IDF smoothing and why do we add +1?";"Adding a small constant to numerator and denominator before computing IDF.
+
+Without smoothing:    IDF = log(N / df)
+With smoothing:       IDF = log((N + 1) / (df + 1))
+
+Problems smoothing solves:
+1. df = 0 (term not in any doc) → division by zero without smoothing
+2. df = N (term in every doc)   → log(1) = 0, which is fine, but df+1 keeps it consistent
+3. Reduces extreme values at the edges"
+"What is TF-IDF and when is the score high?";"TF-IDF scores how important a term is to a specific document relative to the whole corpus.
+
+Formula:
+  TF-IDF = TF × IDF
+
+Score is HIGH when:
+  - Term appears often in this document (high TF)
+  - Term is rare across all documents (high IDF)
+  → The term is uniquely characteristic of this document
+
+Score is LOW when:
+  - Term is common everywhere (low IDF, e.g. ""the"") — even if TF is high
+  - Term barely appears in the document (low TF)
+
+Implementation:
+  tf  = inverted_index.get_tf(doc_id, term)
+  idf = idf_command(term)
+  tf_idf = tf * idf"
+"What is BM25?";"BM25 (Best Match 25) is a modern relevance ranking function used in search engines (e.g. Elasticsearch, Lucene default).
+
+It improves over TF-IDF in two ways:
+1. Saturating TF — more occurrences give diminishing returns (not linear)
+2. Better IDF — stays non-negative even for very common terms
+
+BM25 score for a document given a query:
+  score = Σ BM25_TF(term, doc) × BM25_IDF(term)   for each query term
+
+The ""25"" refers to the 25th iteration in a series of retrieval experiments (Okapi BM25)."
+"What formula does BM25 TF use and what does k1 control?";"Formula:
+  BM25_TF = (tf × (k1 + 1)) / (tf + k1)
+
+k1 controls TF saturation — how quickly extra occurrences stop adding value.
+
+  k1 = 0:   TF ignored entirely, BM25_TF = 1 always
+  k1 = 1.5: typical value, moderate saturation
+  Higher k1: slower saturation, TF matters more
+
+With k1 = 1.5:
+  tf=1  → BM25_TF ≈ 1.0
+  tf=2  → BM25_TF ≈ 1.4
+  tf=5  → BM25_TF ≈ 1.7
+  tf=∞  → BM25_TF → 2.5  (caps at k1 + 1)
+
+Compare to raw TF: grows to infinity linearly with no cap.
+
+Implementation:
+  bm25_tf = (tf * (k1 + 1)) / (tf + k1)"
+"Why does BM25 TF saturate and why is that useful?";"In raw TF, going from 1→2 occurrences has the same impact as 100→101. This is unrealistic — the first few occurrences carry most of the signal.
+
+BM25 TF applies diminishing returns: each extra occurrence adds less weight than the previous, capping around k1+1.
+
+Benefits:
+- Prevents very long documents from dominating just because a term appears many times
+- More accurately reflects human intuition: ""appears often"" ≠ ""appears infinitely more relevant"""
+"What formula does BM25 IDF use and how does it differ from standard IDF?";"Formula:
+  BM25_IDF = log( (N - df + 0.5) / (df + 0.5) + 1 )
+
+Standard IDF:
+  IDF = log(N / df)
+
+Key difference: BM25 IDF is always ≥ 0.
+
+Standard IDF goes negative when df > N/2 (term in more than half the docs).
+BM25 IDF stays non-negative because of the + 1 outside the log — safe for ranking.
+
+0.5 smoothing constants handle edge cases (df=0, df=N) gracefully.
+
+Implementation:
+  bm25_idf = math.log(
+      (len(docmap) - len(docs) + 0.5) / (len(docs) + 0.5) + 1
+  )"
+"What is the difference between AND and OR query semantics in search?";"AND (intersection): document must contain ALL query terms.
+  query: ""police movie""
+  results_police = {1, 5, 99}
+  results_movie  = {1, 7, 99}
+  AND result = {1, 99}  ← both terms required
+
+OR (union): document needs ANY query term.
+  OR result = {1, 5, 7, 99}  ← any match counts
+
+Trade-offs:
+  AND → precise, fewer results, can return zero if one rare term is missing
+  OR  → higher recall, more results, may include loosely relevant docs
+
+Production engines typically use OR for retrieval (find candidates), then rank by how many terms matched and scoring (BM25)."
+"Explain the full preprocessing pipeline used in keyword search.";"Raw text goes through these steps in order:
+
+1. Lowercase          → ""Python"" becomes ""python""
+2. Remove punctuation → ""hello, world!"" becomes ""hello world""
+3. Tokenize           → split on whitespace → [""hello"", ""world""]
+4. Remove stopwords   → drop ""the"", ""is"", ""a"", etc.
+5. Stem               → ""running"" → ""run"", ""movies"" → ""movi""
+
+Result: searchable tokens ready for indexing or querying.
+
+Critical: the query goes through the same pipeline as documents. If you stem documents but not queries, ""running"" won't match ""run"" in the index."
+"What is index persistence in a search engine and why split data into multiple files?";"Index persistence = saving the built index to disk so it doesn't need to be rebuilt on every run.
+
+Three files used:
+  index.pkl            → term → set of doc IDs
+  docmap.pkl           → doc ID → full document data
+  term_frequencies.pkl → doc ID → term counts (needed for TF/BM25)
+
+Why separate files:
+- Load only what's needed for a given operation
+- Rebuild parts independently (e.g. reindex without reloading raw data)
+- Faster startup: just unpickle, no preprocessing
+
+Implementation uses pickle (binary serialization):
+  with open(path, ""wb"") as f:
+      pickle.dump(self.index, f)"
+"What is the purpose of a ""seen"" set during search result collection?";"When multiple query tokens match the same document, that document could appear multiple times in results. A seen set prevents duplicates.
+
+  seen = set()
+  for token in tokens:
+      for id_ in idx.get_documents(token):
+          if id_ in seen:
+              continue       # already added, skip
+          seen.add(id_)
+          results.append(idx.docmap[id_])
+
+Without seen: a doc matching both ""police"" and ""crime"" appears twice.
+With seen: it appears exactly once.
+
+Note: this OR approach doesn't rank docs matching more terms higher. A scoring function (BM25) would fix that."
